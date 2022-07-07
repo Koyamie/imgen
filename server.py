@@ -9,12 +9,9 @@ import os
 import threading
 import traceback
 
-import rethinkdb as r
 from flask import Flask, render_template, request, g, jsonify, make_response
 
-from dashboard import dash
-from utils.db import get_db, get_redis
-from utils.ratelimits import ratelimit, endpoint_ratelimit
+from utils.db import get_redis
 from utils.exceptions import BadRequest
 
 from sentry_sdk import capture_exception
@@ -25,7 +22,6 @@ config = json.load(open('config.json'))
 endpoints = None
 
 app = Flask(__name__, template_folder='views', static_folder='views/assets')
-app.register_blueprint(dash)
 
 app.config['SECRET_KEY'] = config['client_secret']
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = 'true'
@@ -60,10 +56,7 @@ def init_app():
 
 def require_authorization(func):
     def wrapper(*args, **kwargs):
-        if r.table('keys').get(request.headers.get('authorization', '')).coerce_to('bool').default(False).run(get_db()):
-            return func(*args, **kwargs)
-
-        return jsonify({'status': 401, 'error': 'You are not authorized to access this endpoint'}), 401
+        return func(*args, **kwargs)
 
     return wrapper
 
@@ -103,7 +96,6 @@ def docs():
 
 @app.route('/api/<endpoint>', methods=['GET', 'POST'])
 @require_authorization
-@ratelimit
 def api(endpoint):
     if endpoint not in endpoints:
         return jsonify({'status': 404, 'error': 'Endpoint {} not found!'.format(endpoint)}), 404
@@ -130,14 +122,6 @@ def api(endpoint):
                 kwargs[arg] = request_data.get(arg)
     cache = endpoints[endpoint].bucket
     max_usage = endpoints[endpoint].rate
-    e_r = endpoint_ratelimit(auth=request.headers.get('Authorization', None), cache=cache, max_usage=max_usage)
-    if e_r['X-RateLimit-Remaining'] == -1:
-        x = make_response((jsonify({'status': 429, 'error': 'You are being ratelimited'}), 429,
-                          {'X-RateLimit-Limit': e_r['X-RateLimit-Limit'],
-                           'X-RateLimit-Remaining': 0,
-                           'X-RateLimit-Reset': e_r['X-RateLimit-Reset'],
-                           'Retry-After': e_r['Retry-After']}))
-        return x
     if endpoint == 'profile':
         if request.headers.get('Authorization', None) != config.get('memer_token', None):
             return jsonify({"error": 'This endpoint is limited to Dank Memer', 'status': 403}), 403
@@ -163,9 +147,6 @@ def api(endpoint):
             capture_exception(e)
         return jsonify({'status': 500, 'error': str(e)}), 500
 
-    result.headers.add('X-RateLimit-Limit', max_usage)
-    result.headers.add('X-RateLimit-Remaining', e_r['X-RateLimit-Remaining'])
-    result.headers.add('X-RateLimit-Reset', e_r['X-RateLimit-Reset'])
     return result, 200
 
 
