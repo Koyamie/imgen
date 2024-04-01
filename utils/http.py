@@ -40,5 +40,6 @@ def get_image(url, **kwargs):
     try:
         raw = get_content_raw(url, **kwargs)
         return Image.open(BytesIO(raw))
-    except OSError:
+    except OSError as e:
+        print(e, flush=True)
         raise exceptions.BadRequest('An invalid image was provided! Check the URL and try again.')

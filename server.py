@@ -14,8 +14,6 @@ from flask import Flask, render_template, request, g, jsonify, make_response
 from utils.db import get_redis
 from utils.exceptions import BadRequest
 
-from sentry_sdk import capture_exception
-
 # Initial require, the above line contains our endpoints.
 
 config = json.load(open('config.json'))
@@ -25,14 +23,6 @@ app = Flask(__name__, template_folder='views', static_folder='views/assets')
 
 app.config['SECRET_KEY'] = config['client_secret']
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = 'true'
-
-if 'sentry_dsn' in config:
-    import sentry_sdk
-    from sentry_sdk.integrations.flask import FlaskIntegration
-
-    sentry_sdk.init(config['sentry_dsn'],
-                    integrations=[FlaskIntegration()])
-
 
 @app.before_first_request
 def init_app():
@@ -100,14 +90,28 @@ def api(endpoint):
     if endpoint not in endpoints:
         return jsonify({'status': 404, 'error': 'Endpoint {} not found!'.format(endpoint)}), 404
     if request.method == 'GET':
-        text = request.args.get('text', '')
-        avatars = [x for x in [request.args.get('avatar1', request.args.get('image', None)),
-                               request.args.get('avatar2', None)] if x]
-        usernames = [x for x in [request.args.get('username1', None), request.args.get('username2', None)] if x]
-        kwargs = {}
-        for arg in request.args:
-            if arg not in ['text', 'username1', 'username2', 'avatar1', 'avatar2']:
-                kwargs[arg] = request.args.get(arg)
+        if request.is_json:
+            request_data = request.json
+            text = request_data.get('text', '')
+            avatar1 = request_data.get('avatar1', request_data.get('image', None))
+            avatar2 = request_data.get('avatar2', None)
+            avatars = [x for x in [avatar1, avatar2] if x]
+            username1 = request_data.get('username1', None)
+            username2 = request_data.get('username2', None)
+            usernames = [x for x in [username1, username2] if x]
+            kwargs = {}
+            for arg in request_data:
+                if arg not in ['text', 'avatars', 'usernames']:
+                    kwargs[arg] = request_data.get(arg)
+        else:
+            text = request.args.get('text', '')
+            avatars = [x for x in [request.args.get('avatar1', request.args.get('image', None)),
+                                request.args.get('avatar2', None)] if x]
+            usernames = [x for x in [request.args.get('username1', None), request.args.get('username2', None)] if x]
+            kwargs = {}
+            for arg in request.args:
+                if arg not in ['text', 'username1', 'username2', 'avatar1', 'avatar2']:
+                    kwargs[arg] = request.args.get(arg)
     else:
         if not request.is_json:
             return jsonify({'status': 400, 'message': 'when submitting a POST request you must provide data in the '
@@ -133,22 +137,16 @@ def api(endpoint):
                                          kwargs=kwargs)
     except BadRequest as br:
         traceback.print_exc()
-        if 'sentry_dsn' in config:
-            capture_exception(br)
         return jsonify({'status': 400, 'error': str(br)}), 400
     except IndexError as e:
         traceback.print_exc()
-        if 'sentry_dsn' in config:
-            capture_exception(e)
         return jsonify({'status': 400, 'error': str(e) + '. Are you missing a parameter?'}), 400
     except Exception as e:
         traceback.print_exc()
-        if 'sentry_dsn' in config:
-            capture_exception(e)
         return jsonify({'status': 500, 'error': str(e)}), 500
 
     return result, 200
 
 
 if __name__ == '__main__':
-    app.run(debug=False, use_reloader=False)
+    app.run(debug=True, use_reloader=False)
